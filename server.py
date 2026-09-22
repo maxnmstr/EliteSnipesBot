@@ -33,7 +33,7 @@ def format_message(data: dict) -> str:
 
     if t == "entry":
         return (
-            f"🆕 <b>Neues Signal</b> — {symbol} ({tf})\n"
+            f"🆕 <b>New Signal</b> — {symbol} ({tf})\n"
             f"{arrow}\n\n"
             f"🎯 Entry: {data.get('entry')}\n"
             f"🛑 SL (Invalidation): {data.get('sl')}\n"
@@ -44,17 +44,17 @@ def format_message(data: dict) -> str:
     if t in ("tp1", "tp2", "tp3"):
         label = t.upper()
         return (
-            f"✅ <b>{label} erreicht</b> — {symbol} ({tf})\n"
+            f"✅ <b>{label} hit</b> — {symbol} ({tf})\n"
             f"{arrow}\n"
-            f"Preis: {data.get('price')}"
+            f"Price: {data.get('price')}"
         )
     if t == "sl":
         return (
-            f"🛑 <b>SL getroffen</b> — {symbol} ({tf})\n"
+            f"🛑 <b>SL hit</b> — {symbol} ({tf})\n"
             f"{arrow}\n"
-            f"Preis: {data.get('price')}"
+            f"Price: {data.get('price')}"
         )
-    return f"⚠️ Unbekannter Alert-Typ: {json.dumps(data)}"
+    return f"⚠️ Unknown alert type: {json.dumps(data)}"
 
 
 @app.route("/webhook", methods=["POST"])
