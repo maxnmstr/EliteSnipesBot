@@ -42,7 +42,7 @@ def send(text: str, reply_to: int | None = None) -> int | None:
         payload["allow_sending_without_reply"] = True
     r = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload, timeout=10)
     if not r.ok:
-        print("Telegram-Fehler:", r.status_code, r.text)
+        print("Telegram error:", r.status_code, r.text)
         return None
     return r.json()["result"]["message_id"]
 
@@ -61,7 +61,7 @@ def webhook():
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        print("Kein gültiges JSON:", raw)
+        print("Invalid JSON:", raw)
         return "bad json", 400
 
     typ = data.get("type", "signal")
@@ -89,17 +89,17 @@ def webhook():
             signal_msgs[sig_id] = msg_id
 
     elif typ == "tp":
-        tps = data.get("tps_hit", f"TP{data.get('tp', '?')}")
-        text = f"✅ <b>{no}: {tps.replace(',', ' + ')} erreicht</b>\n{side} {symbol} ({tf}) · Preis: {fmt(data['price'])}"
+        tp = data.get("tp", "?")
+        text = f"✅ <b>{no}: TP{tp} hit</b>\n{side} {symbol} ({tf}) · Price: {fmt(data['price'])}"
         send(text, reply_to=signal_msgs.get(sig_id))
 
     elif typ == "sl":
-        text = f"❌ <b>{no}: SL getroffen</b>\n{side} {symbol} ({tf}) · Preis: {fmt(data['price'])}"
+        text = f"❌ <b>{no}: SL hit</b>\n{side} {symbol} ({tf}) · Price: {fmt(data['price'])}"
         send(text, reply_to=signal_msgs.get(sig_id))
         signal_msgs.pop(sig_id, None)
 
     else:
-        print("Unbekannter Typ:", data)
+        print("Unknown type:", data)
 
     return jsonify(ok=True), 200
 
