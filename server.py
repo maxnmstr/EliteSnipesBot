@@ -24,6 +24,12 @@ def fmt(x) -> str:
     return f"{float(x):.2f}"
 
 
+def trade_no(symbol: str, tf: str, no) -> str:
+    """Trade-Nummer im Format Symbol/Timeframe/#Nr. des Tages, z. B. XAUUSD/M15/#3.
+    Die Tageszählung kommt direkt vom Indikator und bleibt daher auch nach einem Server-Neustart korrekt."""
+    return f"{symbol}/{tf}/#{no if no is not None else '?'}"
+
+
 def send(text: str, reply_to: int | None = None) -> int | None:
     payload = {
         "chat_id": CHAT_ID,
@@ -64,10 +70,12 @@ def webhook():
     tf = tf_label(data.get("timeframe", "?"))
     side = data.get("side", "?")
     arrow = "🟢" if side == "LONG" else "🔴"
+    no = trade_no(symbol, tf, data.get("no"))
 
     if typ == "signal":
         text = (
-            f"{arrow} <b>{side} {symbol}</b> ({tf})\n\n"
+            f"{arrow} <b>{side} {symbol}</b> ({tf})\n"
+            f"🔖 Trade <b>{no}</b>\n\n"
             f"📍 Entry: <b>{fmt(data['entry'])}</b>\n"
             f"🛑 SL: {fmt(data['sl'])}\n\n"
             f"🎯 TP1: {fmt(data['tp1'])}\n"
@@ -82,11 +90,11 @@ def webhook():
 
     elif typ == "tp":
         tps = data.get("tps_hit", f"TP{data.get('tp', '?')}")
-        text = f"✅ <b>{tps.replace(',', ' + ')} erreicht</b> – {side} {symbol} ({tf})\nPreis: {fmt(data['price'])}"
+        text = f"✅ <b>{no}: {tps.replace(',', ' + ')} erreicht</b>\n{side} {symbol} ({tf}) · Preis: {fmt(data['price'])}"
         send(text, reply_to=signal_msgs.get(sig_id))
 
     elif typ == "sl":
-        text = f"❌ <b>SL getroffen</b> – {side} {symbol} ({tf})\nPreis: {fmt(data['price'])}"
+        text = f"❌ <b>{no}: SL getroffen</b>\n{side} {symbol} ({tf}) · Preis: {fmt(data['price'])}"
         send(text, reply_to=signal_msgs.get(sig_id))
         signal_msgs.pop(sig_id, None)
 
