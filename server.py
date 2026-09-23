@@ -1,82 +1,99 @@
-import json
 import os
+import json
 
 import requests
-from flask import Flask, request
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# Setze diese als Umgebungsvariablen auf deinem Hosting (Render/Railway/etc.),
-# NICHT hier im Klartext im Code lassen wenn das Repo geteilt wird.
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "DEIN_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "DEINE_CHAT_ID")
-# Optionaler simpler Schutz, damit nicht irgendwer deinen Webhook aufrufen kann.
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
+BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]      # Token von @BotFather
+CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]          # ID der Telegram-Gruppe/des Kanals
+WEBHOOK_KEY = os.environ.get("WEBHOOK_KEY")       # optional: Schutz gegen fremde Aufrufe
+
+# Merkt sich pro Signal-ID die Telegram-Nachricht, damit TP/SL-Meldungen als Antwort darauf erscheinen.
+# Hinweis: Geht bei einem Neustart des Servers verloren (die Meldungen kommen dann ohne Verknüpfung).
+signal_msgs = {}
 
 
-def send_telegram(text: str) -> bool:
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
-    try:
-        r = requests.post(url, json=payload, timeout=10)
-        return r.ok
-    except requests.RequestException:
-        return False
+def tf_label(tf: str) -> str:
+    mapping = {"1": "M1", "5": "M5", "15": "M15", "30": "M30", "60": "H1", "240": "H4", "D": "D1"}
+    return mapping.get(str(tf), str(tf))
 
 
-def format_message(data: dict) -> str:
-    t = data.get("type", "")
-    symbol = data.get("symbol", "")
-    tf = data.get("tf", "")
-    direction = data.get("dir", "")
-    arrow = "🟢 LONG" if direction == "LONG" else "🔴 SHORT"
+def fmt(x) -> str:
+    return f"{float(x):.2f}"
 
-    if t == "entry":
-        return (
-            f"🆕 <b>New Signal</b> — {symbol} ({tf})\n"
-            f"{arrow}\n\n"
-            f"🎯 Entry: {data.get('entry')}\n"
-            f"🛑 SL (Invalidation): {data.get('sl')}\n"
-            f"✅ TP1: {data.get('tp1')}\n"
-            f"✅ TP2: {data.get('tp2')}\n"
-            f"✅ TP3: {data.get('tp3')}"
-        )
-    if t in ("tp1", "tp2", "tp3"):
-        label = t.upper()
-        return (
-            f"✅ <b>{label} hit</b> — {symbol} ({tf})\n"
-            f"{arrow}\n"
-            f"Price: {data.get('price')}"
-        )
-    if t == "sl":
-        return (
-            f"🛑 <b>SL hit</b> — {symbol} ({tf})\n"
-            f"{arrow}\n"
-            f"Price: {data.get('price')}"
-        )
-    return f"⚠️ Unknown alert type: {json.dumps(data)}"
+
+def send(text: str, reply_to: int | None = None) -> int | None:
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+    if reply_to:
+        payload["reply_to_message_id"] = reply_to
+        payload["allow_sending_without_reply"] = True
+    r = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload, timeout=10)
+    if not r.ok:
+        print("Telegram-Fehler:", r.status_code, r.text)
+        return None
+    return r.json()["result"]["message_id"]
+
+
+@app.route("/", methods=["GET"])
+def health():
+    return "ok", 200
 
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    if WEBHOOK_SECRET:
-        if request.args.get("secret") != WEBHOOK_SECRET:
-            return {"error": "unauthorized"}, 401
+    if WEBHOOK_KEY and request.args.get("key") != WEBHOOK_KEY:
+        return "forbidden", 403
 
     raw = request.get_data(as_text=True)
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        return {"error": "invalid json", "raw": raw}, 400
+        print("Kein gültiges JSON:", raw)
+        return "bad json", 400
 
-    msg = format_message(data)
-    ok = send_telegram(msg)
-    return {"sent": ok}, (200 if ok else 500)
+    typ = data.get("type", "signal")
+    sig_id = str(data.get("id", ""))
+    symbol = data.get("symbol", "?")
+    tf = tf_label(data.get("timeframe", "?"))
+    side = data.get("side", "?")
+    arrow = "🟢" if side == "LONG" else "🔴"
 
+    if typ == "signal":
+        text = (
+            f"{arrow} <b>{side} {symbol}</b> ({tf})\n\n"
+            f"📍 Entry: <b>{fmt(data['entry'])}</b>\n"
+            f"🛑 SL: {fmt(data['sl'])}\n\n"
+            f"🎯 TP1: {fmt(data['tp1'])}\n"
+            f"🎯 TP2: {fmt(data['tp2'])}\n"
+            f"🎯 TP3: {fmt(data['tp3'])}\n"
+            f"🎯 TP4: {fmt(data['tp4'])}\n"
+            f"🎯 TP5: {fmt(data['tp5'])}"
+        )
+        msg_id = send(text)
+        if msg_id and sig_id:
+            signal_msgs[sig_id] = msg_id
 
-@app.route("/", methods=["GET"])
-def health():
-    return {"status": "ok"}, 200
+    elif typ == "tp":
+        tps = data.get("tps_hit", f"TP{data.get('tp', '?')}")
+        text = f"✅ <b>{tps.replace(',', ' + ')} erreicht</b> – {side} {symbol} ({tf})\nPreis: {fmt(data['price'])}"
+        send(text, reply_to=signal_msgs.get(sig_id))
+
+    elif typ == "sl":
+        text = f"❌ <b>SL getroffen</b> – {side} {symbol} ({tf})\nPreis: {fmt(data['price'])}"
+        send(text, reply_to=signal_msgs.get(sig_id))
+        signal_msgs.pop(sig_id, None)
+
+    else:
+        print("Unbekannter Typ:", data)
+
+    return jsonify(ok=True), 200
 
 
 if __name__ == "__main__":
